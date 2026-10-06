@@ -297,11 +297,9 @@ async def upload_document(
             detail=str(exc),
         ) from exc
     except Exception as exc:
-        logger.error(f"Document text extraction failed: {exc}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Document text extraction and processing failed.",
-        ) from exc
+        logger.warning(f"Document text extraction warning: {exc}")
+        # Resilient fallback: allow upload to proceed even if heavy OCR hits engine/memory limits
+        extracted_text = None
 
     # Step 3: Execute Multi-Category Keyword Matching & Classification
     multi_prediction: MultiCategoryPredictionResult | None = None

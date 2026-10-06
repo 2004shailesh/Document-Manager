@@ -4,7 +4,8 @@
  * ==============================================================================
  * Purpose:
  *   Handles client-side PDF selection, size pre-validation (<= 3MB), multipart/form-data
- *   submission to `POST /documents/`, and rendering of real-time classification results.
+ *   submission to `POST /documents/`, resilient error recovery, and rendering of
+ *   real-time classification results.
  *
  * Ingestion Flow:
  *   1. File Selection: Restricts input to `.pdf` files.
@@ -12,7 +13,7 @@
  *   3. Multipart Upload: Sends binary payload and `owner_user_id` to the backend.
  *   4. Backend Processing:
  *      - Defense-in-depth PDF signature check.
- *      - Text extraction via PyMuPDF or RapidOCR fallback.
+ *      - Text extraction via PyMuPDF with RapidOCR fallback.
  *      - Multi-category keyword classification.
  *      - PostgreSQL BYTEA persistence.
  *   5. Response & Diagnostics: Displays assigned categories, confidence scores,
@@ -22,7 +23,7 @@
 
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { API_BASE_URL } from '../utils/api';
+import { API_BASE_URL, resilientFetch, extractApiErrorMessage } from '../utils/api';
 import './upload.css';
 
 interface CategorySummary {
@@ -48,6 +49,7 @@ const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024; // 3 MB (3,145,728 b
 function Upload() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [uploadResult, setUploadResult] = useState<DocumentUploadResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -73,6 +75,7 @@ function Upload() {
 
     setError(null);
     setIsUploading(true);
+    setStatusMessage('Uploading document and extracting text...');
 
     const formdata = new FormData();
     formdata.append('file', selectedFile);
@@ -83,27 +86,47 @@ function Upload() {
     }
 
     try {
-      const response = await fetch(`${API_BASE_URL}/documents/`, {
+      const response = await resilientFetch(`${API_BASE_URL}/documents/`, {
         method: 'POST',
         body: formdata,
+        retries: 1,
+        retryDelayMs: 3000,
+        timeoutMs: 60000, // 60s timeout to allow PyMuPDF / RapidOCR processing on cloud containers
+        onStatusUpdate: (msg) => setStatusMessage(msg),
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(data.detail || 'Document upload failed.');
+        const errorMsg = await extractApiErrorMessage(
+          response,
+          'Document upload failed. Please try again.'
+        );
+        throw new Error(errorMsg);
       }
 
+      const data: DocumentUploadResponse = await response.json();
       console.log('Upload Successful', data);
       setUploadResult(data);
       setSelectedFile(null);
+      setStatusMessage(null);
     } catch (err) {
       console.error('Upload error:', err);
-      setError(
-        err instanceof Error ? err.message : 'Upload failed. Please check backend connection.'
-      );
+      const isNetwork =
+        err instanceof TypeError ||
+        (err as Error)?.name === 'AbortError' ||
+        (err as Error)?.message === 'Failed to fetch';
+
+      if (isNetwork) {
+        setError(
+          'Could not reach the backend service. If the server is on a free-tier host (Render), it may be waking up from sleep. Please wait 10 seconds and click "Upload Document" again.'
+        );
+      } else {
+        setError(
+          err instanceof Error ? err.message : 'Upload failed. Please check backend connection.'
+        );
+      }
     } finally {
       setIsUploading(false);
+      setStatusMessage(null);
     }
   };
 
@@ -147,9 +170,39 @@ function Upload() {
                 borderRadius: '8px',
                 marginBottom: '16px',
                 fontSize: '14px',
+                lineHeight: '1.5',
               }}
             >
-              ⚠️ {error}
+              <strong>⚠️ Upload Error:</strong> {error}
+            </div>
+          )}
+
+          {isUploading && statusMessage && (
+            <div
+              style={{
+                background: '#eff6ff',
+                border: '1px solid #bfdbfe',
+                color: '#1e40af',
+                padding: '12px 16px',
+                borderRadius: '8px',
+                marginBottom: '16px',
+                fontSize: '14px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+              }}
+            >
+              <div
+                style={{
+                  width: '16px',
+                  height: '16px',
+                  border: '2px solid #3b82f6',
+                  borderTopColor: 'transparent',
+                  borderRadius: '50%',
+                  animation: 'spin 0.8s linear infinite',
+                }}
+              />
+              <span>{statusMessage}</span>
             </div>
           )}
 
@@ -252,6 +305,12 @@ function Upload() {
                   )}
                 </div>
               </div>
+
+              {uploadResult.matched_keywords && uploadResult.matched_keywords.length > 0 && (
+                <p style={{ fontSize: '13px', color: '#4b5563' }}>
+                  <strong>Matched Keywords:</strong> {uploadResult.matched_keywords.join(', ')}
+                </p>
+              )}
 
               <div style={{ marginTop: '18px' }}>
                 <Link

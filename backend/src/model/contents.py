@@ -137,18 +137,21 @@ def extract_text_from_image(image_bytes: bytes) -> str | None:
         return None
 
 
+# Maximum scanned pages to OCR per document to stay within cloud request timeouts & memory budgets
+MAX_OCR_PAGES = 5
+
+
 def extract_text_from_pdf(pdf_bytes: bytes) -> str | None:
     """
-    Executes dual-pass text extraction across all pages of a PDF document:
-    1. First tries digital text extraction via PyMuPDF.
-    2. If a page contains no digital text (e.g., scanned receipt/invoice),
-       renders the page to a 150 DPI image and invokes RapidOCR.
+    Executes dual-pass text extraction across pages of a PDF document:
+    1. Fast path: Digital text extraction via PyMuPDF (runs across all pages).
+    2. Fallback: RapidOCR optical character recognition for up to MAX_OCR_PAGES scanned pages.
 
     Args:
         pdf_bytes: Raw bytes of the validated PDF.
 
     Returns:
-        str | None: Complete text extracted across all pages, joined by double newlines.
+        str | None: Complete text extracted across pages, joined by double newlines.
 
     Raises:
         InvalidFileTypeError: If PyMuPDF encounters corrupted or unparseable PDF streams.
@@ -163,21 +166,26 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str | None:
 
     try:
         extracted_pages = []
+        ocr_pages_count = 0
 
         for page_num in range(len(doc)):
             page = doc[page_num]
-            # Fast-path digital text extraction
+            # Fast-path digital text extraction (near-instantaneous)
             text = str(page.get_text()).strip()
 
             if text:
                 extracted_pages.append(text)
-            else:
+            elif ocr_pages_count < MAX_OCR_PAGES:
                 # Scanned fallback: 150 DPI balances OCR accuracy and memory/CPU throughput
-                pix = page.get_pixmap(dpi=150)
-                img_bytes = pix.tobytes("png")
-                ocr_text = extract_text_from_image(img_bytes)
-                if ocr_text:
-                    extracted_pages.append(ocr_text)
+                try:
+                    pix = page.get_pixmap(dpi=150)
+                    img_bytes = pix.tobytes("png")
+                    ocr_text = extract_text_from_image(img_bytes)
+                    if ocr_text:
+                        extracted_pages.append(ocr_text)
+                    ocr_pages_count += 1
+                except Exception as ocr_err:
+                    logger.warning(f"Page {page_num} OCR extraction failed: {ocr_err}")
 
         doc.close()
         full_text = "\n\n".join(extracted_pages).strip()
