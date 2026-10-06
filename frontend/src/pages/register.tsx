@@ -6,12 +6,21 @@
  *   Handles new user account registration via `POST /users/`.
  *   Upon successful registration, displays feedback and redirects the user
  *   to `/login` to establish their authenticated session.
+ *
+ * Resiliency:
+ *   - Auto-warms the backend on page load (`warmupServer`).
+ *   - Uses `resilientFetch` to gracefully wait and retry through cloud cold starts.
  * ==============================================================================
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { API_BASE_URL } from '../utils/api';
+import {
+  API_BASE_URL,
+  extractApiErrorMessage,
+  resilientFetch,
+  warmupServer,
+} from '../utils/api';
 import './auth.css';
 
 function Register() {
@@ -19,18 +28,25 @@ function Register() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const navigate = useNavigate();
 
-  const handleRegister = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Proactively ping backend on mount
+  useEffect(() => {
+    warmupServer();
+  }, []);
+
+  const handleRegister = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     setError(null);
+    setStatusMessage(null);
     setSuccessMessage(null);
     setIsLoading(true);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/users/`, {
+      const response = await resilientFetch(`${API_BASE_URL}/users/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -40,24 +56,18 @@ function Register() {
           email: email.trim(),
           password,
         }),
+        retries: 2,
+        retryDelayMs: 3000,
+        timeoutMs: 35000,
+        onStatusUpdate: (msg) => setStatusMessage(msg),
       });
 
-      const data = await response.json().catch(() => null);
-
       if (!response.ok) {
-        let errorMessage = 'Registration failed. Please check your information.';
-        if (data && data.detail) {
-          errorMessage =
-            typeof data.detail === 'string'
-              ? data.detail
-              : Array.isArray(data.detail)
-                ? data.detail
-                    .map((err: { msg?: string }) => err.msg || '')
-                    .filter(Boolean)
-                    .join(', ')
-                : JSON.stringify(data.detail);
-        }
-        setError(errorMessage);
+        const errorMsg = await extractApiErrorMessage(
+          response,
+          'Registration failed. Please check your information.'
+        );
+        setError(errorMsg);
         return;
       }
 
@@ -68,10 +78,11 @@ function Register() {
     } catch (err) {
       console.error('Registration error:', err);
       setError(
-        `Cannot connect to server. Please ensure the backend is running at ${API_BASE_URL}.`
+        `Unable to reach the server at ${API_BASE_URL}. If the backend was asleep, please click 'Retry Connection' below.`
       );
     } finally {
       setIsLoading(false);
+      setStatusMessage(null);
     }
   };
 
@@ -83,10 +94,26 @@ function Register() {
           <p>Register to manage and classify your documents</p>
         </div>
 
+        {statusMessage && (
+          <div className="auth-status-banner" role="status">
+            <span className="auth-spinner"></span>
+            <span>{statusMessage}</span>
+          </div>
+        )}
+
         {error && (
           <div className="auth-error-banner" role="alert">
-            <span>⚠️</span>
-            <span>{error}</span>
+            <div className="auth-error-content">
+              <span>⚠️ {error}</span>
+              <button
+                type="button"
+                className="auth-retry-button"
+                onClick={() => handleRegister()}
+                disabled={isLoading}
+              >
+                🔄 Retry Connection
+              </button>
+            </div>
           </div>
         )}
 
@@ -138,7 +165,14 @@ function Register() {
           </div>
 
           <button type="submit" className="auth-submit-button" disabled={isLoading}>
-            {isLoading ? 'Creating Account...' : 'Register'}
+            {isLoading ? (
+              <span className="button-loading-content">
+                <span className="auth-spinner-small"></span>
+                <span>Creating Account...</span>
+              </span>
+            ) : (
+              'Register'
+            )}
           </button>
         </form>
 
@@ -151,3 +185,4 @@ function Register() {
 }
 
 export default Register;
+
