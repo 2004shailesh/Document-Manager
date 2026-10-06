@@ -15,30 +15,44 @@ export const API_BASE_URL: string = (
 ).replace(/\/+$/, '');
 
 let isWarmupTriggered = false;
+let heartbeatIntervalId: number | null = null;
 
 /**
  * Sends a non-blocking background ping to wake up a sleeping backend container.
- * Safe to call multiple times; will only execute once per browser session.
+ * Safe to call multiple times; also initializes a 4-minute active heartbeat.
  */
 export function warmupServer(): void {
-  if (isWarmupTriggered) return;
-  isWarmupTriggered = true;
+  if (!isWarmupTriggered) {
+    isWarmupTriggered = true;
 
-  // Background ping without awaiting or blocking UI
-  fetch(`${API_BASE_URL}/health`, {
-    method: 'GET',
-    headers: { Accept: 'application/json' },
-    mode: 'cors',
-  })
-    .then((res) => {
-      if (res.ok) {
-        console.info('[API Warmup] Backend service is awake and healthy.');
-      }
+    // Immediate background ping
+    fetch(`${API_BASE_URL}/health`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      mode: 'cors',
     })
-    .catch(() => {
-      // Quietly ignore warmup errors (actual requests will retry if needed)
-      console.debug('[API Warmup] Warmup ping sent to backend.');
-    });
+      .then((res) => {
+        if (res.ok) {
+          console.info('[API Warmup] Backend service is awake and healthy.');
+        }
+      })
+      .catch(() => {
+        console.debug('[API Warmup] Warmup ping sent to backend.');
+      });
+  }
+
+  // Start continuous 4-minute keepalive heartbeat if not already running
+  if (heartbeatIntervalId === null && typeof window !== 'undefined') {
+    heartbeatIntervalId = window.setInterval(() => {
+      fetch(`${API_BASE_URL}/health`, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+        mode: 'cors',
+      }).catch(() => {
+        // Silent catch for background heartbeat
+      });
+    }, 4 * 60 * 1000); // 4 minutes (Render sleeps after 15 minutes)
+  }
 }
 
 export interface FetchRetryOptions extends RequestInit {
