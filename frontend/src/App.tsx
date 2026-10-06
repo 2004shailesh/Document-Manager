@@ -5,6 +5,9 @@ import Login from './pages/login';
 import Register from './pages/register';
 import Dashboard from './pages/dashboard';
 import Upload from './pages/upload';
+import PrivacyPolicy from './pages/privacy';
+import TermsOfService from './pages/terms';
+import Contact from './pages/contact';
 
 function App() {
   return (
@@ -19,6 +22,9 @@ function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/upload" element={<Upload />} />
+          <Route path="/privacy" element={<PrivacyPolicy />} />
+          <Route path="/terms" element={<TermsOfService />} />
+          <Route path="/contact" element={<Contact />} />
 
           {/* Default redirect to dashboard */}
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -32,3 +38,4 @@ function App() {
 }
 
 export default App;
+

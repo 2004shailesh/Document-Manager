@@ -7,6 +7,7 @@
  * ==============================================================================
  */
 
+import { Link } from 'react-router-dom';
 import './footer.css';
 
 function Footer() {
@@ -16,18 +17,19 @@ function Footer() {
     <footer className="app-footer">
       <p>© {currentYear} Document Manager. All rights reserved.</p>
       <div className="footer-links">
-        <a href="#" className="footer-link">
+        <Link to="/privacy" className="footer-link">
           Privacy Policy
-        </a>
-        <a href="#" className="footer-link">
+        </Link>
+        <Link to="/terms" className="footer-link">
           Terms of Service
-        </a>
-        <a href="#" className="footer-link">
+        </Link>
+        <Link to="/contact" className="footer-link">
           Contact
-        </a>
+        </Link>
       </div>
     </footer>
   );
 }
 
 export default Footer;
+
